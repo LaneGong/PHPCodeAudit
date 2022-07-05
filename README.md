@@ -214,6 +214,58 @@ phar的本质是一种压缩文件，其中每个被压缩文件的权限、属�
    http://localhost/unser_phar.php?filename=phar://phar.phar
    ```
 
-   
 
-   
+## SQL注入漏洞
+
+> 此漏洞借助PHPstudy复现有点小困难，需要编辑一下数据库...
+
+### 复现
+
+源码`sql1.php`
+
+SQL参数拼接，未作任何过滤，因此无需要正确密码，通过SQL注入读取所有数据。
+
+> 原则上用户名和密码必须全对才能从数据库中选出符合条件的数据
+
+利用1: 读取用户名为admin，密码随便写的账户信息
+
+payload：`http://localhost/sql1.php?username=admin%27%23&password=xxx`
+
+`%27`等价于`'`,`%23`等价于`#`
+
+等价的sql语句结果为
+
+```sql
+select * from users where user='admin'#' and password='9336ebf25087d91c818ee6e9ec29f8c1'
+```
+
+#代表注释即只有前半句username是有效的。
+
+利用2: 获取所有用户信息
+
+payload：`http://localhost/sql1.php?username=%27%20or%20%271%27=%271%27%23&password=xx`
+
+等价的sql语句结果为
+
+```sql
+select * from users where user='' or '1'='1'#' and password='9336ebf25087d91c818ee6e9ec29f8c1'
+```
+
+### 防御
+
+预编译方法防范sql注入漏洞`sql2.php`
+
+> PDO预处理:https://book.itheima.net/course/1258677827423715330/1265953996862119937/1277478421638684675。预处理SQL语句中的参数占位符是由冒号“:”和标识符组成，在为参数占位符绑定数据时，只要保证数组中元素的“键名”与参数占位符的“标识符”相同即可，键名中的冒号可以省略。
+
+```php
+#关键代码
+$sql='select * from users where user=:username and password=:password';
+$stmt=$pdo->prepare($sql);
+$stmt->execute(array(":username"=>$username,":password"=>$password));
+```
+
+通过占位符为什么能防止SQL注入？
+
+[SQL注入&预编译](https://forum.butian.net/share/1559)
+
+我的简单理解：前面是直接拼接，相当于传进来的参数和初始语句组合出了一条完整的SQL命令。而通过占位符原始语句全都提前编译好了，最终比对的只有变量部分，变量传的是什么则查询时数据库比对的就是什么。如`username=%27%20or%20%271%27=%271%27%23`，则数据库查询时是拿`%27%20or%20%271%27=%271%27%23`去和数据库中的user比对，有就返回，没有就不存在。因此预编译加占位符能有效防止SQL注入！
